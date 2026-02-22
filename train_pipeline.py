@@ -85,13 +85,13 @@ def main():
         num_class=10,
         random_state=42,
         n_jobs=-1,
-        n_estimators=300,        # More trees to learn complex patterns
-        learning_rate=0.05,      # Slower learning rate for better generalization
-        max_depth=8,             # Limit depth to prevent overfitting
-        num_leaves=64,           # Allow more leaves per tree
-        subsample=0.8,           # Use 80% of rows per tree (reduces overfitting)
-        colsample_bytree=0.8,    # Use 80% of features per tree
-        min_child_samples=20     # Minimum data points in a leaf
+        n_estimators=335,
+        learning_rate=0.06922234836478142,
+        max_depth=10,
+        num_leaves=81,
+        subsample=0.8247062763577886,
+        colsample_bytree=0.8260390616334965,
+        min_child_samples=55
     )
     model.fit(X_train, y)
     
