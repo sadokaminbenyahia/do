@@ -2,6 +2,7 @@ import pandas as pd
 from sklearn.metrics import f1_score
 from solution import preprocess, load_model, predict
 import time
+import os
 
 def main():
     print("1. Chargement du fichier de test (test1.csv)...")
@@ -15,9 +16,6 @@ def main():
     
     print(f"Taille du jeu de test : {df_inference.shape[0]} lignes.")
     
-    # Mesure du temps d'exécution
-    start_time = time.time()
-    
     print("\n2. Exécution du pipeline de la solution...")
     # Étape 1 : Preprocess
     df_preprocessed = preprocess(df_inference)
@@ -25,31 +23,45 @@ def main():
     # Étape 2 : Chargement du modèle
     artifacts = load_model()
     
+    # Mesure du temps d'exécution (seulement sur predict() selon les règles)
+    start_time = time.time()
+    
     # Étape 3 : Prédiction (doit retourner User_ID et Purchased_Coverage_Bundle)
     predictions_df = predict(df_preprocessed, artifacts)
     
-    execution_time = time.time() - start_time
+    latency_s = time.time() - start_time
     
     print("\n3. Format du DataFrame retourné par predict() :")
     print(predictions_df.head())
     print(f"Colonnes présentes : {list(predictions_df.columns)}")
-    print(f"\nTemps d'inférence (Preprocess + Pred) : {execution_time:.2f} secondes.")
     
-    # 4. Évaluation avec le Macro F1-Score
-    print("\n4. Évaluation des performances (Macro F1-Score)...")
+    # Check Model Size
+    try:
+        size_mb = os.path.getsize('model.joblib') / (1024 * 1024)
+    except FileNotFoundError:
+        print("\nERREUR: model.joblib introuvable. Taille définie à 0 MB.")
+        size_mb = 0
     
-    # On s'assure d'aligner les User_ID si jamais l'ordre avait changé (bien que non supposé)
+    # 4. Évaluation & Calcul du Score Final
+    print("\n4. Évaluation des performances...")
+    
+    # On s'assure d'aligner les User_ID si jamais l'ordre avait changé
     results_merged = df_test[['User_ID', 'Purchased_Coverage_Bundle']].rename(columns={'Purchased_Coverage_Bundle': 'y_true'})
     results_merged = results_merged.merge(predictions_df, on='User_ID', suffixes=('', '_pred'))
     
     macro_f1 = f1_score(results_merged['y_true'], results_merged['Purchased_Coverage_Bundle'], average='macro')
     
-    print(f"==> Macro F1-Score sur test1.csv : {macro_f1:.4f} <==")
+    size_penalty = max(0.5, 1 - (size_mb / 200))
+    latency_penalty = max(0.5, 1 - (latency_s / 10))
     
-    if execution_time < 10:
-        print("[OK] Condition respectee : L'inference prend bien moins de 10 secondes.")
-    else:
-        print("[KO] Attention : L'inference est trop lente (> 10 sec).")
+    final_score = macro_f1 * size_penalty * latency_penalty
+    
+    print(f"==> Base Macro F1-Score : {macro_f1:.4f}")
+    print(f"==> Model Size          : {size_mb:.2f} MB (Multiplier: {size_penalty:.4f})")
+    print(f"==> Inference Latency   : {latency_s:.4f} sec (Multiplier: {latency_penalty:.4f})")
+    print("--------------------------------------------------")
+    print(f"==> FINAL ADJUSTED SCORE: {final_score:.4f} <==")
+    print("--------------------------------------------------")
 
 if __name__ == "__main__":
     main()

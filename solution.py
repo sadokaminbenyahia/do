@@ -12,6 +12,7 @@
 # Import necessary libraries here
 import pandas as pd
 import joblib
+import numpy as np
 
 def preprocess(df):
     # Implement any preprocessing steps required for your model here.
@@ -21,17 +22,32 @@ def preprocess(df):
     # It will be used in the predict function to return the final predictions.
     df_out = df.copy()
     
-    # Ajout du Total_Dependents
+    # ------------------ Demographics ------------------
     dep_cols = ['Adult_Dependents', 'Child_Dependents', 'Infant_Dependents']
     if all(c in df_out.columns for c in dep_cols):
         df_out['Total_Dependents'] = df_out['Adult_Dependents'] + df_out['Child_Dependents'] + df_out['Infant_Dependents']
     else:
         df_out['Total_Dependents'] = 0
-        
-    # Ajout du revenu par tête
-    if 'Estimated_Annual_Income' in df_out.columns and 'Total_Dependents' in df_out.columns:
+
+    df_out['Is_Family'] = (df_out['Total_Dependents'] > 0).astype(int)
+
+    if 'Estimated_Annual_Income' in df_out.columns:
         df_out['Revenu_par_tete'] = df_out['Estimated_Annual_Income'] / (df_out['Total_Dependents'] + 1)
+        
+    # ------------------ Risk Profile ------------------
+    if 'Previous_Claims_Filed' in df_out.columns and 'Previous_Policy_Duration_Months' in df_out.columns:
+        denom = df_out['Previous_Policy_Duration_Months'].clip(lower=1)
+        df_out['Claims_Per_Month'] = df_out['Previous_Claims_Filed'] / denom
+        
+    if 'Previous_Claims_Filed' in df_out.columns:
+        df_out['Has_Previous_Claims'] = (df_out['Previous_Claims_Filed'] > 0).astype(int)
+        
+    # ------------------ Operational Friction ------------------
+    friction_cols = ['Underwriting_Processing_Days', 'Days_Since_Quote']
+    if all(c in df_out.columns for c in friction_cols):
+        df_out['Total_Friction_Days'] = df_out['Underwriting_Processing_Days'] + df_out['Days_Since_Quote']
     
+    # ------------------ Identify Columns ------------------
     cat_cols = df_out.select_dtypes(include=['object', 'category']).columns.tolist()
     if 'User_ID' in cat_cols:
         cat_cols.remove('User_ID')
@@ -42,12 +58,14 @@ def preprocess(df):
     if 'Purchased_Coverage_Bundle' in num_cols:
         num_cols.remove('Purchased_Coverage_Bundle')
         
-    # Gestion des valeurs nulles
+    # ------------------ Missing Values & Types ------------------
     for c in cat_cols:
         df_out[c] = df_out[c].fillna('Missing').astype(str)
         
     for c in num_cols:
-        df_out[c] = df_out[c].fillna(-1)
+        # Do not fill missing numerical values with -1. Leave them as NaN. 
+        # LightGBM is optimized to handle missing values natively.
+        df_out[c] = df_out[c].astype(float)
 
     return df_out
 
@@ -97,35 +115,28 @@ def predict(df, model):
     cat_cols = model_artifacts['cat_cols']
     features = model_artifacts['features']
     
-    # On s'assure de ne pas modifier le DataFrame source accidentellement
-    X = df.copy()
-    
     # Extraction de l'User_ID - requis en sortie
-    if 'User_ID' not in X.columns:
+    if 'User_ID' not in df.columns:
         raise ValueError("La colonne 'User_ID' est manquante dans les données.")
-    user_ids = X['User_ID']
+    user_ids = df['User_ID']
     
     # Assurer que les colonnes catégorielles existaient à l'entraînement
-    for c in cat_cols:
-        if c not in X.columns:
-            X[c] = 'Missing'
+    missing_cat_cols = set(cat_cols) - set(df.columns)
+    for c in missing_cat_cols:
+        df[c] = 'Missing'
             
     # Application de l'encodeur
     if len(cat_cols) > 0:
-        X[cat_cols] = encoder.transform(X[cat_cols].astype(str))
+        df[cat_cols] = encoder.transform(df[cat_cols].astype(str))
         
     # Gérer les potentielles colonnes qui existeraient lors de l'entraînement 
     # mais qui seraient absentes dans ce dataset de test
-    for f in features:
-        if f not in X.columns:
-            X[f] = -1
+    missing_features = set(features) - set(df.columns)
+    for f in missing_features:
+        df[f] = np.nan
             
-    # Filtre strictement les colonnes pour n'avoir que ce que le modèle attend
-    # et dans l'ordre exact attendu
-    X_model = X[features]
-    
     # Inférence
-    preds = clf.predict(X_model)
+    preds = clf.predict(df[features])
     
     # Création du format de soumission final
     predictions = pd.DataFrame({
